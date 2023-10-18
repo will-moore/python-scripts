@@ -109,5 +109,21 @@ def main(argv):
                 # print('cevt', evt.containingEvent, evt.status)
             print("results", len(results))
 
+
+        # find recent Annotation links...
+        for dtype in ("Project", "Dataset", "Image"):
+            query = ("select l from %sAnnotationLink as l "
+                     "join fetch l.parent as p "
+                     "join fetch l.child as a "
+                     "left outer join fetch a.file "
+                     "join fetch l.details.creationEvent as evt "
+                     "where evt.time>:time "
+                     "order by evt.time desc" % dtype)
+
+            results = query_service.findAllByQuery(query, params, None)
+            print(dtype, "links...")
+            for a in results:
+                print(a.id.val, str(datetime.fromtimestamp(a.details.creationEvent._time.val/1000)))
+
 if __name__ == '__main__':  
     main(sys.argv[1:])
