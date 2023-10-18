@@ -110,20 +110,21 @@ def main(argv):
             print("results", len(results))
 
 
-        # find recent Annotation links...
+        # find recent TagAnnotation links...
         for dtype in ("Project", "Dataset", "Image"):
             query = ("select l from %sAnnotationLink as l "
                      "join fetch l.parent as p "
                      "join fetch l.child as a "
-                     "left outer join fetch a.file "
+                     # "left outer join fetch a.file " - only for FileAnnotation
                      "join fetch l.details.creationEvent as evt "
                      "where evt.time>:time "
+                     "and a.class=TagAnnotation "
                      "order by evt.time desc" % dtype)
 
             results = query_service.findAllByQuery(query, params, None)
             print(dtype, "links...")
-            for a in results:
-                print(a.id.val, str(datetime.fromtimestamp(a.details.creationEvent._time.val/1000)))
+            for link in results:
+                print("Tag", link.child.textValue.val, str(datetime.fromtimestamp(link.details.creationEvent._time.val/1000)))
 
 if __name__ == '__main__':  
     main(sys.argv[1:])
