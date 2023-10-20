@@ -26,7 +26,6 @@ def set_channel_names_new(conn, dataset_ids, nameDict, lookup_group=False):
 
     images = conn.getContainerService().getImages("Dataset", dataset_ids, None, conn.SERVICE_OPTS)
     imageIds = [i.getId().getValue() for i in images]
-    return
 
     queryService = conn.getQueryService()
     params = omero.sys.Parameters()
@@ -88,7 +87,7 @@ def main(argv):
         # conn.SERVICE_OPTS.setOmeroGroup("-1")
 
         # start = datetime.now()
-        # set_channel_names_new(conn, [dataset_id], nameDict)
+        set_channel_names_new(conn, [dataset_id], nameDict)
         # print("set_channel_names_new", datetime.now() - start)
 
         # start = datetime.now()
@@ -105,23 +104,23 @@ def main(argv):
         # set_channel_names_new(conn, [dataset_id], nameDict)
         # print("set_channel_names_new group -1", datetime.now() - start)
 
-        conn.SERVICE_OPTS.setOmeroGroup("-1")
+        # conn.SERVICE_OPTS.setOmeroGroup("-1")
 
-        start = datetime.now()
-        images = conn.getContainerService().getImages("Dataset", [dataset_id], None, conn.SERVICE_OPTS)
-        ids1 = [i.getId().getValue() for i in images]
-        print("containerService.getImages()", datetime.now() - start)
+        # start = datetime.now()
+        # images = conn.getContainerService().getImages("Dataset", [dataset_id], None, conn.SERVICE_OPTS)
+        # ids1 = [i.getId().getValue() for i in images]
+        # print("containerService.getImages()", datetime.now() - start)
 
-        start = datetime.now()
-        images = conn.getObjects("Image", opts={'dataset': dataset_id})
-        ids2 = [i.id for i in images]
-        print("getObjects()", datetime.now() - start)
+        # start = datetime.now()
+        # images = conn.getObjects("Image", opts={'dataset': dataset_id})
+        # ids2 = [i.id for i in images]
+        # print("getObjects()", datetime.now() - start)
 
-        ids1.sort()
-        ids2.sort()
-        assert ids1 == ids2
+        # ids1.sort()
+        # ids2.sort()
+        # assert ids1 == ids2
 
-        print("Image count: ", len(ids1))
+        # print("Image count: ", len(ids1))
 
         # start = datetime.now()
         # conn.getContainerService().getImages("Image", (ids1[0],), None, conn.SERVICE_OPTS)[0]
