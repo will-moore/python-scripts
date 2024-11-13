@@ -50,6 +50,9 @@ def main(argv):
         emissionFilter.setInstrument(instrument)
         emissionFilter = update_service.saveAndReturnObject(emissionFilter, conn.SERVICE_OPTS)
 
+        logical_channel_ids = []
+        lightpath_ids = []
+        link_ids = []
         # Link it to a new light path for each channel, adding the light path to the logical channel
         for index, ch in enumerate(image.getChannels(noRE=True)):
             print("CHANNEL")
@@ -61,9 +64,57 @@ def main(argv):
                 link.setChild(emissionFilter)
                 link = update_service.saveAndReturnObject(link, conn.SERVICE_OPTS)
                 print("link", link.id.val, "parent lightPath", link.parent.id.val, "child Filter", link.child.id.val)
+                link_ids.append(link.id.val)
                 logicalChannel.setLightPath(link.parent)
                 logicalChannel = update_service.saveAndReturnObject(logicalChannel, conn.SERVICE_OPTS)
-                print("logicalChannel", logicalChannel)
+                # update_service.saveObject(ch._obj, conn.SERVICE_OPTS)
+                print("logicalChannel", logicalChannel.id.val, "lightPath", logicalChannel.lightPath.id.val)
+                logical_channel_ids.append(logicalChannel.id.val)
+                lightpath_ids.append(logicalChannel.lightPath.id.val)
+
+        image.setInstrument(instrument)
+        update_service.saveObject(image._obj, conn.SERVICE_OPTS)
+
+
+        # Now try to load the light path and emission filter
+
+        # Light path loaded but not the emission filters
+        params = omero.sys.ParametersI()
+        params.addIds(logical_channel_ids)
+        # code from loadChannelAcquisitionData() - also used this below.
+        # https://github.com/ome/omero-server/blob/8eb311d45642163b79463c38c4b06884a637923d/src/main/java/ome/logic/MetadataImpl.java#L473
+        query = """select l from LogicalChannel as l 
+                    join fetch l.lightPath as lp
+                    left outer join fetch lp.emissionFilterLink as efLpl
+                    left outer join fetch efLpl.child as efLp 
+                    left outer join fetch efLp.transmittanceRange as efLpTrans
+                    left outer join fetch efLp.type as type3 
+            where l.id in (:ids)"""
+        logical_channels = query_service.findAllByQuery(query, params)
+        # print("logical_channels", logical_channels)
+        # _emissionFilterLinkSeq = {}
+        # _emissionFilterLinkLoaded = True
+
+        # Finds nothing!
+        print('lightpath_ids', lightpath_ids)
+        params = omero.sys.ParametersI()
+        params.addIds(lightpath_ids)
+        query = """select link from LightPathEmissionFilterLink as link
+            where link.parent.id in (:ids)
+        """
+        lightpaths = query_service.findAllByQuery(query, params)
+        print("lightpaths", lightpaths)
+
+        # Finds nothing!
+        print('link_ids', link_ids)
+        params = omero.sys.ParametersI()
+        params.addIds(link_ids)
+        query = """select link from LightPathEmissionFilterLink as link
+            where link.id in (:ids)
+        """
+        links = query_service.findAllByQuery(query, params, conn.SERVICE_OPTS)
+        print("links", links)
+
 
         # Check if we can see the emission filter in the webclient
         for ch in image.getChannels(noRE=True):
@@ -82,8 +133,10 @@ def main(argv):
                 for f in lightPath.getEmissionFilters():
                     print("emission filter", f)
 
-        image.setInstrument(instrument)
-        update_service.saveObject(image._obj, conn.SERVICE_OPTS)
+        # Same as above
+        acqs = conn.getMetadataService().loadChannelAcquisitionData(logical_channel_ids, conn.SERVICE_OPTS)
+        print("acqs", acqs)
+        # lightpath._emissionFilterLinkLoaded = True
 
 
 if __name__ == '__main__':
