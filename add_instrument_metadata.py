@@ -30,6 +30,7 @@ def main(argv):
     with cli_login() as cli:
         conn = BlitzGateway(client_obj=cli._client)
         update_service = conn.getUpdateService()
+        types_service = conn.getTypesService()
         query_service = conn.getQueryService()
         conn.SERVICE_OPTS.setOmeroGroup(-1)
 
@@ -87,12 +88,17 @@ def main(argv):
         detector_settings.setOffsetValue(rdouble(0.5))
 
         # Set channel Excitation and Emission wavelengths
-        for ch in image.getChannels(noRE=True):
+        contrast_methods = [cm.getValue() for cm in conn.getEnumerationEntries("ContrastMethod")]
+        print("contrast_methods", contrast_methods)
+
+        for con_method, ch in zip(contrast_methods, image.getChannels(noRE=True)):
             logicalChannel = ch.getLogicalChannel()
             if logicalChannel is not None:
                 logicalChannel.setEmissionWave(LengthI(500, UnitsLength.NANOMETER))
                 logicalChannel.setExcitationWave(LengthI(400, UnitsLength.NANOMETER))
                 logicalChannel.setDetectorSettings(detector_settings)
+                contrast = types_service.getEnumeration('ContrastMethod', con_method)
+                logicalChannel.setContrastMethod(contrast)
                 update_service.saveAndReturnObject(logicalChannel._obj, conn.SERVICE_OPTS)
 
         image.setInstrument(instrument)
