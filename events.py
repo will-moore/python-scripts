@@ -62,6 +62,21 @@ from omero.rtypes import rstring, rtime
 from omero.cli import cli_login
 from omero.gateway import BlitzGateway
 
+
+def find_event_by_id(conn, event_id):
+    query_service = conn.getQueryService()
+    params = omero.sys.ParametersI()
+    params.addId(event_id)
+    otypes = ["Project", "Dataset", "Image", "Screen", "Plate", "Well", "Roi", "Shape"]
+    for otype in otypes:
+        query = "select d from %s as d where d.details.updateEvent.id=:id" % otype
+        obj = query_service.findByQuery(query, params, conn.SERVICE_OPTS)
+        if obj is not None:
+            print( " ---> Edited Object:", otype, obj.id.val, obj.details.updateEvent)
+            return
+    print("No object found for event id:", event_id)
+
+
 def main(argv):
 
     with cli_login() as cli:
@@ -76,38 +91,40 @@ def main(argv):
 
         # find events from the last month or hour
         now = datetime.now()
-        now = now.replace(month=now.month-1)
-        # now = now.replace(hour=now.hour-1)
+        # now = now.replace(month=now.month-1)
+        now = now.replace(hour=now.hour-1)
         print("Finding events since:", str(now))
         millisecs = now.timestamp() * 1000
         print("millisecs", millisecs)
 
         # Find most bunch of events of each type...
-        for evt_type in event_types.keys():
-            params = omero.sys.ParametersI()
-            offset = 0
-            limit = 5
-            params.page(offset, limit)
+        # for evt_type in ["User"]:    # event_types.keys():
+        params = omero.sys.ParametersI()
+        offset = 0
+        limit = 50
+        params.page(offset, limit)
 
-            params.add('type', rstring(evt_type))
-            params.add('time', rtime(millisecs))
+        # params.add('type', rstring(evt_type))
+        params.add('time', rtime(millisecs))
 
-            query = """select e from Event as e
-                join fetch e.type as t
-                left outer join fetch e.containingEvent as evt
-                where t.value=:type and e.time>:time
-                order by e.time desc
-            """
+        query = """select e from Event as e
+            join fetch e.type as t
+            left outer join fetch e.containingEvent as evt
+            order by e.time desc
+        """
 
-            results = query_service.findAllByQuery(query, params, None)
+        results = query_service.findAllByQuery(query, params, None)
 
-            # print(result)
-            print("\nevt_type", evt_type)
-            for evt in results:
-                print(evt.id.val, str(datetime.fromtimestamp(evt.time.val/1000)), evt.type.value.val)
-                # these both seem to be None
-                # print('cevt', evt.containingEvent, evt.status)
-            print("results", len(results))
+        # print(result)
+        # print("\nevt_type", evt_type)
+        for evt in results:
+            print(evt.id.val, str(datetime.fromtimestamp(evt.time.val/1000)), evt.type.value.val)
+            # print(evt)
+            # these both seem to be None
+            # print('cevt', evt.containingEvent, evt.status)
+            # Try to find the object associated with the event...
+            find_event_by_id(conn, evt.id.val)
+        print("results", len(results))
 
 
         # find recent TagAnnotation links...
