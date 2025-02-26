@@ -5,6 +5,7 @@ import os
 import shutil
 import sys
 import zarr
+import json
 
 
 """
@@ -142,9 +143,22 @@ def main(argv):
             assert arr.shape[0] == 1, "Only single-timepoint data supported"
             assert arr.shape[1] == 1, "Only single channel data supported"
             new_shape = (size_t, size_c) + arr.shape[2:]
+
+            # Create an empty zarr array for each dataset, using the existing .zarray json (since it matches the chunks)
+            zarray_path = os.path.join(dir_path, '.zarray')
+            with open(zarray_path, 'r') as f:
+                json_text = f.read()
+                print('zarray', dataset, json_text)
+                array_json = json.loads(json_text)
+            # The only change we make is to update the shape...
+            array_json["shape"] = new_shape
+            # ...and write the new .zarray file for each dataset e.g. image.zarr/0/.zarray, image.zarr/1/.zarray etc
+            new_array_path = os.path.join(output_zarr, dataset, '.zarray')
+            print('new_array_path', new_array_path)
             if not dry_run:
-                # Create an empty zarr array for each dataset
-                root.create_dataset(shape=new_shape, dtype=arr.dtype, chunks=arr.chunks, name=dataset, dimension_separator='/')
+                os.makedirs(os.path.join(output_zarr, dataset), exist_ok=True)
+                with open(os.path.join(output_zarr, dataset, '.zarray'), 'w') as f:
+                    f.write(json.dumps(array_json))
             dataset_paths.append(dataset)
 
     dataset_paths.sort()
