@@ -38,7 +38,7 @@ $ python combine_zarrs.py path/to/input_dir output.zarr "fused_tp_<T:1-123>_ch<C
 
 To check only, use --dry-run:
 
-$ python combine_zarrs.py path/to/input_dir "fused_tp_<T:1-123>_ch<C:1-2>.zarr" output.zarr --dry-run
+$ python combine_zarrs.py path/to/input_dir output.zarr "fused_tp_<T:1-123>_ch<C:1-2>.zarr" --dry-run
 
 """
 
@@ -111,6 +111,7 @@ def main(argv):
             sys.exit(1)
         
     zarr_name = args.zarr_name
+    print("zarr_name", zarr_name)
     t_range = get_t_range(zarr_name)
     c_range = get_c_range(zarr_name)
     size_t = t_range[1] - t_range[0] + 1
@@ -118,15 +119,21 @@ def main(argv):
     print('t_range', t_range)
     print('c_range', c_range)
 
-    # create a new zarr group
-    if not dry_run:
-        store = zarr.DirectoryStore(output_zarr)
-        root = zarr.group(store=store)
-
     # Use first zarr to get the dataset paths
     first_name = get_zarr_name(t_range[0], c_range[0], zarr_name)
     print('first_name', first_name)
     zarr1 = os.path.join(input_dir, first_name, '0')
+
+    # Create output directory.zarr/OME/METADATA.ome.xml
+    # with updated size_t, size_c
+    if not dry_run:
+        os.makedirs(os.path.join(output_zarr, 'OME'), exist_ok=True)
+        with open(os.path.join(input_dir, first_name, 'OME', 'METADATA.ome.xml'), 'r') as fin:
+            xml_text = fin.read()
+            xml_text = xml_text.replace('SizeC="1"', f'SizeC="{size_c}"')
+            xml_text = xml_text.replace('SizeT="1"', f'SizeT="{size_t}"')
+            with open(os.path.join(output_zarr, 'OME', 'METADATA.ome.xml'), 'w') as f:
+                f.write(xml_text)
 
     # go through each dataset (pyramid level) in the first zarr
     # to get the shape of the data
