@@ -5,29 +5,20 @@ from omero.rtypes import rint, rstring
 
 from skimage import morphology
 from skimage import measure
+from skimage.filters import threshold_otsu
+from skimage.util import invert
+import matplotlib.pyplot as plt
 
 # Adapted from https://gist.github.com/stefanv/7c296c26b0c3624746f4317bed6a3540
 
-conn = BlitzGateway('username', 'password', port=4064, host='localhost')
-conn.connect()
-updateService = conn.getUpdateService()
+# Tested with https://downloads.openmicroscopy.org/images/SVS/77928.svs
+# Using threshold = 200 and start_x = 5000, start_y = 5000, cols = 40, rows = 40
+# this will produce about 250,000 shapes.
 
-image_id = 1257
-image = conn.getObject("Image", image_id)
-pixels = image.getPrimaryPixels()
+from omero.cli import cli_login
 
-size_x = image.getSizeX()
-size_y = image.getSizeY()
+TILE_SIZE = 1000
 
-start_x = 50000
-start_y = 10000
-cols = 40
-rows = 45
-
-tile_size = 1000
-
-channel = 2
-threshold = 14
 
 def rgba_to_int(red, green, blue, alpha=255):
     """ Return the color as an Integer in RGBA encoding """
@@ -59,27 +50,65 @@ def add_polygon(contour, x_offset, y_offset):
     # Save the ROI (saves any linked shapes too)
     updateService.saveObject(roi)
 
-total = 0
-tiles = 0
-for col in range(cols):
-    for row in range(rows):
-        tiles += 1
-        x = start_x + (col * tile_size)
-        y = start_y + (row * tile_size)
-        print('x, y', x, y)
-        tile = pixels.getTile(theC=2, tile=(x, y, tile_size, tile_size))
-        print(tile.shape)
-        mask = tile < threshold
-        mask = morphology.remove_small_objects(mask, min_size=10)
-        mask = morphology.binary_dilation(mask)
-        mask = morphology.binary_dilation(mask)
-        mask = morphology.remove_small_holes(mask)
-        contours = measure.find_contours(mask, 0)
-        print('Found %s contours', len(contours))
-        total += len(contours)
-        print('total ROIS:', total, 'tiles', tiles)
-        for c in contours:
-            add_polygon(c, x, y)
-            
 
+with cli_login() as cli:
+    conn = BlitzGateway(client_obj=cli._client)
+    updateService = conn.getUpdateService()
 
+    image_id = 3165
+    image = conn.getObject("Image", image_id)
+    pixels = image.getPrimaryPixels()
+
+    size_x = image.getSizeX()
+    size_y = image.getSizeY()
+
+    # Hard-code some values...
+    # TODO: use size_x and size_y to interate over whole image
+    start_x = 5000
+    start_y = 5000
+    cols = 40
+    rows = 40
+
+    channel = 2
+    threshold = 200
+
+    total = 0
+    tiles = 0
+    for col in range(cols):
+        for row in range(rows):
+            tiles += 1
+            x = start_x + (col * TILE_SIZE)
+            y = start_y + (row * TILE_SIZE)
+            tile = pixels.getTile(theC=channel, tile=(x, y, TILE_SIZE, TILE_SIZE))
+            # nuclei are black...
+            tile = invert(tile)
+
+            # threshold = threshold_otsu(tile)
+            # print('Threshold', threshold)
+            mask = tile < threshold
+            mask = morphology.remove_small_objects(mask, min_size=10)
+            mask = morphology.binary_dilation(mask)
+            mask = morphology.binary_dilation(mask)
+            mask = morphology.remove_small_holes(mask)
+            contours = measure.find_contours(mask, 0)
+            print('Found %s contours', len(contours))
+            total += len(contours)
+
+            # Used this and threshold_otsu above to find a good threshold value
+            # that gives a resonable number of polygons per tile. Then hard-coded it
+            # to be the same for the whole image.
+
+            # while len(contours) > 200:
+            #     threshold += 5
+            #     print('Threshold', threshold)
+            #     mask = tile < threshold
+            #     mask = morphology.remove_small_objects(mask, min_size=10)
+            #     mask = morphology.binary_dilation(mask)
+            #     mask = morphology.binary_dilation(mask)
+            #     mask = morphology.remove_small_holes(mask)
+            #     contours = measure.find_contours(mask, 0)
+            #     print('Found %s contours', len(contours))
+
+            print('total ROIS:', total, 'tiles', tiles)
+            for c in contours:
+                add_polygon(c, x, y)
