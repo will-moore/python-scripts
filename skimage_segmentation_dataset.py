@@ -1,17 +1,17 @@
 
+import sys
+import argparse
+
 import omero
+from omero.cli import cli_login
 from omero.gateway import BlitzGateway
 from omero.rtypes import rint, rstring
 
+from skimage.filters import threshold_otsu
 from skimage import morphology
 from skimage import measure
 
 # Adapted from https://gist.github.com/stefanv/7c296c26b0c3624746f4317bed6a3540
-
-conn = BlitzGateway('user-3', 'ome', port=4064, host='merge-ci-devspace.openmicroscopy.org')
-conn.connect()
-updateService = conn.getUpdateService()
-
 
 def rgba_to_int(red, green, blue, alpha=255):
     """ Return the color as an Integer in RGBA encoding """
@@ -24,7 +24,7 @@ def rgba_to_int(red, green, blue, alpha=255):
         rgba_int = rgba_int - 2**32
     return rgba_int
 
-def add_polygon(contour, x_offset=0, y_offset=0):
+def add_polygon(image, updateService, contour, x_offset=0, y_offset=0):
     """ points is 2D list of [[x, y], [x, y]...]"""
 
     points = ["%s,%s" % (xy[1] + x_offset, xy[0] + y_offset) for xy in contour]
@@ -43,28 +43,66 @@ def add_polygon(contour, x_offset=0, y_offset=0):
     # Save the ROI (saves any linked shapes too)
     updateService.saveObject(roi)
 
-total = 0
-img_count = 0
+def delete_ROIs(conn, image):
+    rois = conn.getObjects('Roi', opts={'image': image.id})
+    roi_ids = [roi.id for roi in rois]
+    if len(roi_ids) > 0:
+        print("Deleting %s ROIs" % len(roi_ids))
+        conn.deleteObjects("Roi", roi_ids)
 
-threshold = 25
-# plate = conn.getObject("Plate", plate_id)
-# images = get_images_from_plate(plate)
+def main(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('target', type=str, help='Dataset:123 or Plate:123')
+    parser.add_argument('channel', type=int, help='channel index to segment')
+    args = parser.parse_args(argv)
 
-dataset = conn.getObject('Dataset', 17371)
-images = dataset.listChildren()
+    total = 0
+    img_count = 0
 
-for image in images:
-    pixels = image.getPrimaryPixels()
-    plane = pixels.getPlane(theC=0)
-    mask = plane < threshold
-    mask = morphology.remove_small_objects(mask, min_size=10)
-    mask = morphology.binary_dilation(mask)
-    mask = morphology.binary_dilation(mask)
-    mask = morphology.remove_small_holes(mask)
-    contours = measure.find_contours(mask, 0)
-    print('Found contours:', len(contours))
-    total += len(contours)
-    img_count += 1
-    print('Total shapes:', total, "images:", img_count)
-    for c in contours:
-        add_polygon(c)
+    with cli_login() as cli:
+        conn = BlitzGateway(client_obj=cli._client)
+        updateService = conn.getUpdateService()
+
+        images = []
+        target_type = args.target.split(':')[0]
+        target_id = int(args.target.split(':')[1])
+        if target_type == 'Plate':
+            plate = conn.getObject('Plate', target_id)
+            for well in plate.listChildren():
+                for ws in well.listChildren():
+                    images.append(ws.getImage())
+        elif target_type == 'Dataset':
+            dataset = conn.getObject('Dataset', target_id)
+            images = list(dataset.listChildren())
+        print("Found %s images in %s" % (len(images), target_type))
+
+        for image in images:
+            print("Image", image.id, image.name)
+            ch_index = args.channel
+            delete_ROIs(conn, image)
+            pixels = image.getPrimaryPixels()
+            plane = pixels.getPlane(theC=ch_index)
+
+            # contour_count = 100
+            # threshold = threshold_otsu(plane)
+            threshold = 50
+            # while contour_count > 10:
+            mask = plane < threshold
+            mask = morphology.remove_small_objects(mask, min_size=10)
+            # mask = morphology.binary_dilation(mask)
+            # mask = morphology.binary_dilation(mask)
+            mask = morphology.remove_small_holes(mask)
+            contours = measure.find_contours(mask, 0)
+            contour_count = len(contours)
+            print('Found contours:', contour_count)
+            # threshold += 100
+
+            total += len(contours)
+            img_count += 1
+            for c in contours:
+                add_polygon(image, updateService, c)
+
+        print('Total shapes:', total, "images:", img_count)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
