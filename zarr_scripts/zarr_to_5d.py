@@ -21,6 +21,11 @@ import sys
 from pathlib import Path
 
 REQUIRED_AXES = ["t", "c", "z", "y", "x"]
+DEFAULT_AXES = {"c": {"name": "c", "type": "channel"},
+                "t": {"name": "t", "type": "time"},
+                "z": {"name": "z", "type": "space"},
+                "y": {"name": "y", "type": "space"},
+                "x": {"name": "x", "type": "space"}}
 
 def read_zattrs(zattrs_path):
     with open(zattrs_path, 'r') as f:
@@ -37,15 +42,16 @@ def get_axes(data):
         raise ValueError("Invalid .zattrs format: missing multiscales[0].axes")
 
 def ensure_axes(axes_list):
-    names = [a["name"] for a in axes_list]
+    axes_by_name = {a["name"]: a for a in axes_list}
     updated = False
 
-    for i, axis in enumerate(REQUIRED_AXES):
-        if i >= len(names) or names[i] != axis:
-            print(f"Inserting missing axis '{axis}' at position {i}")
-            axes_list.insert(i, {"name": axis})
-            updated = True
-    return axes_list, updated
+    new_axes = []
+    for name in REQUIRED_AXES:
+        if name not in axes_by_name:
+            updated =True
+        axis = axes_by_name.get(name, DEFAULT_AXES.get(name))
+        new_axes.append(axis)
+    return new_axes, updated
 
 def update_directory_structure(base_dir, original_axes, new_axes):
     """
