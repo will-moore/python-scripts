@@ -61,7 +61,10 @@ def crop_zarr(path, xywh, rotation):
     orig_scale = multiscales["datasets"][0]["coordinateTransformations"][0]["scale"]
     
     identity_aff = Affine(translate=[0] * data.ndim)
-    identity_matrix = identity_aff.affine_matrix.tolist()
+    # for "affine" transform, we don't need the last row.
+    # E.g. for CYX image, we need only 3 rows 4 columns.
+    identity_matrix = identity_aff.affine_matrix[:-1, :].tolist()
+    print("Identity matrix:", identity_matrix)
     
     # handle .ome.zarr or .zarr
     out_path = path.replace('.ome.zarr', '.zarr')
@@ -98,7 +101,13 @@ def crop_zarr(path, xywh, rotation):
         extra_dims = final_data.ndim - 2
         if extra_dims > 0:
             rotation_aff = rotation_aff.expand_dims(list(range(extra_dims)))
-        rotation_matrix = rotation_aff.affine_matrix.tolist()
+        # NGFF spec says we don't need full affine matrix, ONLY the rotation part,
+        # so we can remove the last row and column from e.g. CYX image:
+        # [[ 1   0   0   0]
+        #  [ 0   0.9 0.4 0]
+        #  [ 0  -0.4 0.9 0]
+        #  [ 0   0   0   1]]
+        rotation_matrix = rotation_aff.affine_matrix[:-1, :-1].tolist()
 
         print("Affine rotation_matrix:", rotation_matrix)
 
