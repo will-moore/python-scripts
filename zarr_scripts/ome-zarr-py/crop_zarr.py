@@ -34,7 +34,7 @@ NB: This uses ome-zarr-py 0.12.0 (Not yet with RFC-5 support)
 COORDINATE_SYS_NAMES = ["physical", "rotated", "stitched"]
 
 
-def crop_zarr(path, xywh, rotation):
+def crop_zarr(path, xywh, rotation, add_labels=False):
     """Crop a region from a Zarr dataset and save to a new Zarr dataset.
 
     Args:
@@ -169,7 +169,7 @@ def crop_zarr(path, xywh, rotation):
     # We don't know how many levels will be in new image, but we can assume
     # same number as original image. If croped image has FEWER levels, that
     # is OK, the extra cood_trnsfms will be ignored.
-    for level in range(1, len(multiscales["datasets"])):
+    for level in range(1, 5):
         previous_scale = coord_trnsfms[-1][0]["scale"]
         curr_scale = previous_scale[:]
         curr_scale[-1] *= 2
@@ -217,11 +217,12 @@ def crop_zarr(path, xywh, rotation):
 
     save_to_path = os.path.join(root_path, tile_path)
     print("Writing tile to:", save_to_path)
+    print("final_data", final_data.shape, final_data.dtype)
 
     tile_group = zarr.open_group(save_to_path, mode="w", zarr_format=3)
     write_image(image=final_data, group=tile_group,
                 coordinate_transformations=coord_trnsfms, axes=axes)
-    
+
     # manually add coordinateTransformations for rotated system
     ms = get_metadata(tile_group)["multiscales"]
     if xywh.lower() == "full":
@@ -240,6 +241,8 @@ def crop_zarr(path, xywh, rotation):
             "name": COORDINATE_SYS_NAMES[0],
             "axes": axes
         }]
+    # TODO: update write_image() to write 'coordinateSystems' instead of axes!
+    del ms[0]["axes"]
 
     add_metadata(tile_group, {"multiscales": ms})
     # force update of version
@@ -248,52 +251,70 @@ def crop_zarr(path, xywh, rotation):
     if omero_attrs:
         add_metadata(tile_group, {"omero": omero_attrs})
 
+    if not add_labels:
+        return
 
     # Write labels...
-    # channel_axis = [ax["name"] for ax in axes].index("c")
-    # if channel_axis > -1:
-    #     # slide final_data to get first channel
-    #     ch_data = np.take(final_data, [0], axis=channel_axis)
-    #     print("ch_data, before squeeze:", ch_data.shape, ch_data.dtype)
-    #     ch_data = np.squeeze(ch_data, axis=channel_axis)
-    # else:
-    #     ch_data = final_data
+    # Just use FIRST channel and threshold to create simple binary label
+    # TODO: create multiple labels, one per channel?
+    CH_INDEX = 0
+    channel_axis = [ax["name"] for ax in axes].index("c")
+    if channel_axis > -1:
+        # slice final_data to get chosen channel
+        ch_data = np.take(final_data, [CH_INDEX], axis=channel_axis)
+        print("ch_data, before squeeze:", ch_data.shape, ch_data.dtype)
+        ch_data = np.squeeze(ch_data, axis=channel_axis)
+    else:
+        ch_data = final_data
 
-    # print("ch_data, after squeeze:", ch_data.shape, ch_data.dtype)
-    # threshold = ski.filters.threshold_otsu(ch_data)
-    # label_data = ch_data > threshold
-    # label_data = label_data.astype(np.uint8)
-    # print("Label data:", label_data.shape, label_data.dtype)
+    print("ch_data, after squeeze:", ch_data.shape, ch_data.dtype)
+    threshold = ski.filters.threshold_otsu(ch_data)
+    label_data = ch_data > threshold
+    label_data = label_data.astype(np.uint8)
+    print("Label data:", label_data.shape, label_data.dtype)
 
-    # labels_grp = tile_group.create_group("labels")
-    # label_name = "green"
-    # add_metadata(labels_grp, {"labels": [label_name], "version": "0.6dev2"})
-    # label_grp = labels_grp.create_group(label_name)
+    labels_grp = tile_group.create_group("labels")
+    label_name = f"channel_{CH_INDEX}"
+    add_metadata(labels_grp, {"labels": [label_name], "version": "0.6dev2"})
+    label_grp = labels_grp.create_group(label_name)
 
-    # lbl_trans = coord_trnsfms.copy()
-    # if channel_axis > -1:
-    #     # remove channel dimension from scale transforms
-    #     for t_list in lbl_trans:
-    #         for t in t_list:
-    #             if t["type"] == "scale":
-    #                 # remove channel dimension
-    #                 t["scale"].pop(channel_axis)
-    #             elif t["type"] == "translation":
-    #                 t["translation"].pop(channel_axis)
+    lbl_trans = coord_trnsfms.copy()
+    if channel_axis > -1:
+        # remove channel dimension from scale transforms
+        for t_list in lbl_trans:
+            for t in t_list:
+                if t["type"] == "scale":
+                    # remove channel dimension
+                    t["scale"].pop(channel_axis)
+                elif t["type"] == "translation":
+                    t["translation"].pop(channel_axis)
 
-    # label_axes = [ax for ax in axes if ax["name"] != "c"]
-    # write_image(label_data, label_grp, coordinate_transformations=lbl_trans, axes=label_axes)
-    # # we need 'image-label' attr to be recognized as label
-    # add_metadata(label_grp, {"image-label": {
-    #     "colors": [{"label-value": 1, "rgba": [255, 255, 255, 255]}]
-    # }})
-    # # manually add coordinateTransformations for rotated system
-    # # TODO: need to remove channel dimension from translation & rotation matrices
-    # ms = get_metadata(label_grp)["multiscales"]
-    # ms[0]["coordinateTransformations"] = [sibling_trans]
-    # add_metadata(label_grp, {"multiscales": ms})
-    # # force update of version
-    # add_metadata(label_grp, {"version": "0.6dev2"})
+    label_axes = [ax for ax in axes if ax["name"] != "c"]
+    write_image(label_data, label_grp, coordinate_transformations=lbl_trans, axes=label_axes)
+    # we need 'image-label' attr to be recognized as label
+    add_metadata(label_grp, {"image-label": {
+        "colors": [{"label-value": 1, "rgba": [255, 255, 255, 255]}]
+    }})
+    # manually add coordinateTransformations for rotated system
+    # TODO: need to remove channel dimension from translation & rotation matrices
+    ms = get_metadata(label_grp)["multiscales"]
+    if channel_axis > -1:
+        for transf in sibling_trans["transformations"]:
+            if transf["type"] == "translation":
+                transf["translation"].pop(channel_axis)
+            elif transf["type"] == "rotation":
+                matrix = np.array(transf["rotation"])
+                print("ROTATION matrix label", matrix)
+                # remove channel axis from 2D matrix
+                for dim in (0, 1):
+                    matrix = np.delete(matrix, channel_axis, dim)
+                transf["rotation"] = matrix.tolist()
+                print("ROTATION matrix label, after remove channel:", transf["rotation"])
+    print("Label sibling_trans:", sibling_trans)
+    ms[0]["coordinateTransformations"] = [sibling_trans]
+    add_metadata(label_grp, {"multiscales": ms})
+    # force update of version
+    add_metadata(label_grp, {"version": "0.6dev2"})
 
 
 
@@ -302,6 +323,7 @@ def main(argv):
     parser.add_argument('path', help='Path to the Zarr dataset')
     parser.add_argument('xywh', help='Crop region: x,y,width,height OR "full"')
     parser.add_argument('rotation', help='Rotation angle in degrees')
+    parser.add_argument('--labels', action='store_true', help='Add labels from Otsu thresholding')
 
     args = parser.parse_args(argv)
 
@@ -311,7 +333,7 @@ def main(argv):
 
     # Call the crop function
     dir_path = os.path.dirname(args.path)  # remove trailing /
-    crop_zarr(dir_path, args.xywh, rotation)
+    crop_zarr(dir_path, args.xywh, rotation, add_labels=args.labels)
 
 
 if __name__ == '__main__':
