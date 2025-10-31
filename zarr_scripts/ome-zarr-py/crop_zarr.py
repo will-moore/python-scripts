@@ -166,26 +166,6 @@ def crop_zarr(path, xywh, rotation, add_labels=False):
         "scale": orig_scale
     }])
 
-    # We don't know how many levels will be in new image, but we can assume
-    # same number as original image. If croped image has FEWER levels, that
-    # is OK, the extra cood_trnsfms will be ignored.
-    for level in range(1, 5):
-        previous_scale = coord_trnsfms[-1][0]["scale"]
-        curr_scale = previous_scale[:]
-        curr_scale[-1] *= 2
-        curr_scale[-2] *= 2
-        coord_trnsfms.append([{
-            "input": str(level),
-            "output": COORDINATE_SYS_NAMES[0],
-            "type": "scale",
-            "name": f"scale_{level}",
-            "scale": curr_scale
-        }])
-
-    if xywh.lower() != "full":
-        # HARD-CODED!
-        coord_trnsfms = coord_trnsfms[:5]
-
 
     # READY to write out...
 
@@ -220,41 +200,35 @@ def crop_zarr(path, xywh, rotation, add_labels=False):
     print("final_data", final_data.shape, final_data.dtype)
 
     tile_group = zarr.open_group(save_to_path, mode="w", zarr_format=3)
-    write_image(image=final_data, group=tile_group,
-                coordinate_transformations=coord_trnsfms, axes=axes)
+    # uses https://github.com/ome/ome-zarr-py/pull/492 for 'scale' support
+    write_image(image=final_data, group=tile_group, scale=orig_scale, axes=axes)
 
     # manually add coordinateTransformations for rotated system
     ms = get_metadata(tile_group)["multiscales"]
-    if xywh.lower() == "full":
-        # Full image has "physical" only
-        ms[0]["coordinateSystems"] = [{
-            "name": COORDINATE_SYS_NAMES[0],
-            "axes": axes
-        }]
-    else:
+    if xywh.lower() != "full":
         # cropped/rotated image has "physical" and "rotated"
+        # write_image() already added "physical"
+        # ome-zarr-py doesn't support coordinateTransformations outide of multiscales yet
+        # Also only supports "physical" coordinate system
+        # TODO: check if this ordering is valid for the Spec??
         ms[0]["coordinateTransformations"] = [sibling_trans]
-        ms[0]["coordinateSystems"] = [{
+        ms[0]["coordinateSystems"].append({
             "name": COORDINATE_SYS_NAMES[1],
             "axes": axes
-        }, {
-            "name": COORDINATE_SYS_NAMES[0],
-            "axes": axes
-        }]
-    # TODO: update write_image() to write 'coordinateSystems' instead of axes!
-    del ms[0]["axes"]
+        })
 
     add_metadata(tile_group, {"multiscales": ms})
     # force update of version
-    add_metadata(tile_group, {"version": "0.6dev2"})
+    # add_metadata(tile_group, {"version": "0.6dev2"})
 
     if omero_attrs:
         add_metadata(tile_group, {"omero": omero_attrs})
 
+
+    # Write labels - if we have --labels flag
     if not add_labels:
         return
 
-    # Write labels...
     # Just use FIRST channel and threshold to create simple binary label
     # TODO: create multiple labels, one per channel?
     CH_INDEX = 0
@@ -278,25 +252,17 @@ def crop_zarr(path, xywh, rotation, add_labels=False):
     add_metadata(labels_grp, {"labels": [label_name], "version": "0.6dev2"})
     label_grp = labels_grp.create_group(label_name)
 
-    lbl_trans = coord_trnsfms.copy()
-    if channel_axis > -1:
-        # remove channel dimension from scale transforms
-        for t_list in lbl_trans:
-            for t in t_list:
-                if t["type"] == "scale":
-                    # remove channel dimension
-                    t["scale"].pop(channel_axis)
-                elif t["type"] == "translation":
-                    t["translation"].pop(channel_axis)
+    lbl_scale = orig_scale[:]
+    lbl_scale.pop(channel_axis)
 
     label_axes = [ax for ax in axes if ax["name"] != "c"]
-    write_image(label_data, label_grp, coordinate_transformations=lbl_trans, axes=label_axes)
+    write_image(label_data, label_grp, scale=lbl_scale, axes=label_axes)
     # we need 'image-label' attr to be recognized as label
     add_metadata(label_grp, {"image-label": {
         "colors": [{"label-value": 1, "rgba": [255, 255, 255, 255]}]
     }})
-    # manually add coordinateTransformations for rotated system
-    # TODO: need to remove channel dimension from translation & rotation matrices
+    # manually add coordinateTransformation and coordinateSystem for rotation
+    # need to remove channel dimension from translation & rotation matrices
     ms = get_metadata(label_grp)["multiscales"]
     if channel_axis > -1:
         for transf in sibling_trans["transformations"]:
@@ -312,9 +278,11 @@ def crop_zarr(path, xywh, rotation, add_labels=False):
                 print("ROTATION matrix label, after remove channel:", transf["rotation"])
     print("Label sibling_trans:", sibling_trans)
     ms[0]["coordinateTransformations"] = [sibling_trans]
+    ms[0]["coordinateSystems"].append({
+        "name": COORDINATE_SYS_NAMES[1],
+        "axes": label_axes
+    })
     add_metadata(label_grp, {"multiscales": ms})
-    # force update of version
-    add_metadata(label_grp, {"version": "0.6dev2"})
 
 
 
