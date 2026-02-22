@@ -2,6 +2,7 @@
 
 # url = "https://uk1s3.embassy.ebi.ac.uk/idr/zarr/test-data/v0.6.dev3/idr0050/4995115_output_to_ms.zarr"
 
+import os
 import math
 import zarr
 from PIL import Image, ImageDraw, ImageFont
@@ -9,25 +10,30 @@ from PIL import Image, ImageDraw, ImageFont
 import argparse
 
 MS_BORDER = "#a0a0a0"
-MS_FILL = "#e0e0f0"
+MS_FILL = "#ededf8"
 CS_BORDER = MS_BORDER
-CS_FILL = "white"
+CS_FILL = "#ffffff"
+CS_HIGHLIGHT = "#fff8e1"
 TRANSFORM_COLOR = "#1d8dcd"
+TRANSFORM_FILL = "#e6f6fd"
+TRANSFORM_WIDTH = 1
 TEXT_COLOR = "#303030"
+FONT_SIZE = 18
+SMALL_FONT_SIZE = 12
 
 argparser = argparse.ArgumentParser(description='Draw a scene graph from an OME-Zarr file')
 argparser.add_argument('url', type=str, help='URL or path to OME-Zarr file')
 args = argparser.parse_args()
 url = args.url
 
-# try:
-#     font = ImageFont.truetype(path_to_font, fontsize)
-# except Exception:
-#     try:
-#         font_path = os.path.join(self.FONTPATH, "B24.pil")
-#         font = ImageFont.load(font_path)
-#     except Exception:
-font = ImageFont.load_default()
+try:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    path_to_font = os.path.join(current_dir, "FreeSans.ttf")
+    font = ImageFont.truetype(path_to_font, FONT_SIZE)
+    font_small = ImageFont.truetype(path_to_font, SMALL_FONT_SIZE)
+except Exception:
+    font = ImageFont.load_default()
+    font_small = ImageFont.load_default()
 
 root = zarr.open_group(url, mode="r")
 
@@ -143,8 +149,17 @@ for path in child_paths:
             end = f"{path}/{ct["output"]}"
             transforms.append({"start": start, "end": end, "transform": ct})
 
+# find coordinateSystems that are NOT in inputs...
+csKeys = set(systemCoords.keys())
+for t in transforms:
+    csKeys.remove(t["start"])
+# ...add show in highlight color
+for k in csKeys:
+    systemCoords[k]["fill"] = CS_HIGHLIGHT
 
-# draw the result
+
+# draw the result ------------------->
+
 max_x = max([ms["coords"]["x"] + ms["coords"]["width"] for ms in multiscales[1:]])
 canvas_width = max_x + SPACE
 canvas_height = multiscales[-1]["coords"]["y"] + multiscales[-1]["coords"]["height"] + SPACE
@@ -161,9 +176,11 @@ for ms in multiscales:
 
 
 for system in systemCoords.values():
+    fill = system.get("fill", CS_FILL)
     draw.rounded_rectangle((system["x"], system["y"],
                     system["x"] + system["width"],
-                    system["y"] + system["height"]), radius=5, outline=CS_BORDER, fill=CS_FILL)
+                    system["y"] + system["height"]), radius=5, outline=CS_BORDER, fill=fill
+                    )
     draw.text((system["x"] + TXT_MARGIN, system["y"] + TXT_MARGIN), system["text"], fill=TEXT_COLOR, font=font)
 
 
@@ -219,7 +236,7 @@ def draw_curve(start, end, right=True):
         xys = [(x1, y1), (midpoint, y1), (midpoint, y2), (x2, y2)]
     bezier = make_bezier(xys)
     points = bezier(ts)
-    draw.line(points, fill=TRANSFORM_COLOR, width=1)
+    draw.line(points, fill=TRANSFORM_COLOR, width=TRANSFORM_WIDTH)
 
     # add arrow head polygon
     arrow_size = -10 if right or x1 > x2 else 10
@@ -245,5 +262,22 @@ for t in transforms:
         draw_curve((start_x, start_y), (end_x, end_y), False)
     else:
         draw_curve((start_x, start_y), (end_x, end_y))
+
+    # add text for transform type
+    tf = t["transform"]
+    ct_type = tf["type"]
+    if ct_type == "sequence":
+        ct_type += " (" + ", ".join([t["type"] for t in tf["transformations"]]) + ")"
+    bbox = font_small.getbbox(ct_type)
+    text_x = (start_x + end_x) / 2 - (bbox[2] / 2)
+    if not to_or_from_scene:
+        text_x += math.fabs(end_y - start_y) * 1.5
+    text_y = (start_y + end_y) / 2 - bbox[3] / 2
+
+    draw.rounded_rectangle((text_x, text_y,
+                    text_x + bbox[2] + 2 * TXT_MARGIN,
+                    text_y + bbox[3] + 2 * TXT_MARGIN), radius=FONT_SIZE, outline=TRANSFORM_COLOR, fill=TRANSFORM_FILL
+                    )
+    draw.text((text_x + TXT_MARGIN, text_y + TXT_MARGIN), ct_type, fill=TEXT_COLOR, font=font_small)
 
 canvas.show()
